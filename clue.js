@@ -39,12 +39,26 @@ function flatten(list) {
   return list.reduce((a, b) => a.concat(b), []);
 }
 
+/**
+ * Given a list of true variables, this returns a negated list of all other variables
+ * that are in our solver. This can be useful for making a set of true variables into
+ * something that can totally identify a solution to eliminate it from a solver.
+ * @param {LogicSolver} solver - A Logic solver instance.
+ * @param {array<string>} v - The variable we are trying to
+ *   find potential cards for.
+ */
 function negatedMissingVars(solver, trueVars) {
   const allVars = solver._num2name.filter(function(name) { return name && name[0] !== '$' });
   const trueVarsObject = trueVars.reduce(function(acc, v) { acc[v] = true; return acc; }, {});
   return allVars.filter(v => !trueVarsObject[v]).map(v => Logic.not(v));
 }
 
+/**
+ * Finds potental cards that a variable can potentially have.
+ * @param {LogicSolver} solver - A Logic solver instance.
+ * @param {LogicSolverVariable} v - The variable we are trying to
+ *   find potential cards for.
+ */
 function potentialCards(solver, v) {
   const prev = [];
   const solutions = new Set();
@@ -94,6 +108,8 @@ class ClueGame {
     const cardsNotInCaseFile = cardValues.length - 3;
     const cardsPerPlayer = Math.floor(cardsNotInCaseFile / players.length);
     const cardsFaceUp = cardsNotInCaseFile - cardsPerPlayer * players.length;
+
+    invariant(cardsFaceUp === 0, 'TODO have not added support for specifying cards face up');
 
     // Add cards that are left face-up
     this.faceUp = [];
@@ -163,19 +179,29 @@ class ClueGame {
     }
   }
 
+  *_playersBetween(suggester, refuter) {
+    // returns list of player indices between suggester and refuter. If refuter
+    // is missing, all players but the suggester are returned.
+    // Handles wrap-around in players array. Handles case of missing refuter.
+    const suggesterIndex = this.players.indexOf(suggester);
+    const refuterIndex = refuter ? this.players.indexOf(refuter) : suggesterIndex;
+    let lastIndex = refuterIndex;
+    if (refuterIndex <= suggesterIndex) {
+      lastIndex += this.players.length;
+    }
+
+    for (let idx = suggesterIndex + 1; idx < lastIndex; idx++) {
+      yield this.players[idx % this.players.length];
+    }
+  }
+
   suggest(suggester, suspect, weapon, room, refuter, cardShown) {
     invariant(refuter !== suggester, 'refuter is the suggester');
 
     const suggestedCards = [suspect, weapon, room];
-    const suggesterIndex = this.players.indexOf(suggester);
 
-    // handles wrap-around in players array. handles case of missing refuter.
-    const refuterIndex = refuter ? this.players.indexOf(refuter) : suggesterIndex;
-    let idx = suggesterIndex + 1;
-    while (idx < refuterIndex) {
-      idx = idx % this.players.length;
-      this._constrainPlayerCards(this.players[idx], _hasNone(suggestedCards));
-      idx++;
+    for (const player of this._playersBetween(suggester, refuter)) {
+      this._constrainPlayerCards(player, _hasNone(suggestedCards));
     }
 
     if (cardShown) {
@@ -185,10 +211,26 @@ class ClueGame {
     }
   }
 
+  potentialSolution() {
+    return {
+      suspect: potentialCards(this.solver, this.caseSuspect),
+      weapon: potentialCards(this.solver, this.caseWeapon),
+      room: potentialCards(this.solver, this.caseRoom)
+    };
+  }
+
   checkAccusation(suspect, weapon, room) {
-    return potentialCards(this.solver, this.caseSuspect).includes(suspect) &&
-      potentialCards(this.solver, this.caseWeapon).includes(weapon) &&
-      potentialCards(this.solver, this.caseRoom).includes(room);
+    const s = this.potentialSolution();
+    return s.suspect.includes(suspect) &&
+      s.weapon.includes(weapon) &&
+      s.room.includes(room);
+  }
+
+  hasExactSolution() {
+    const s = this.potentialSolution();
+    return s.suspect.length === 1 &&
+      s.weapon.length === 1 &&
+      s.room.length === 1;
   }
 
   failedAccusation(suspect, weapon, room) {
@@ -202,3 +244,6 @@ class ClueGame {
 }
 
 exports.ClueGame = ClueGame;
+// visible for testing
+exports._negatedMissingVars = negatedMissingVars;
+exports._potentialCards = potentialCards;

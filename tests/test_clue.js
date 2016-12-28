@@ -1,5 +1,14 @@
 const assert = require('assert');
-const { ClueGame } = require('../clue');
+const { ClueGame, _negatedMissingVars, _potentialCards } = require('../clue');
+const Logic = require('logic-solver');
+
+function assertPlayerCardsHaveSamePotentialValues(solver, playerCards) {
+  const potentials = playerCards.map(c => _potentialCards(solver, c));
+  const first = Array.from(potentials[0]).sort();
+  for (const potentialSolution of potentials) {
+    assert.deepEqual(first, Array.from(potentialSolution).sort());
+  }
+}
 
 describe('clue', function() {
   it('base test from AI assignment', function() {
@@ -39,7 +48,62 @@ describe('clue', function() {
     game.suggest('white', 'peacock', 'lead pipe', 'study', 'scarlet', 'study');
     game.suggest('green', 'white', 'lead pipe', 'study', 'scarlet', 'white');
     game.suggest('peacock', 'white', 'lead pipe', 'study', 'scarlet', 'white');
+
+    assert(!game.hasExactSolution());
+    assert.deepEqual(game.potentialSolution(), {
+      suspect: ['peacock'],
+      weapon: ['lead pipe'],
+      room: ['kitchen', 'billiard room']
+    });
+    for (const playerCards of game.cardLocations) {
+      assertPlayerCardsHaveSamePotentialValues(game.solver, playerCards);
+    }
+
     game.suggest('plum', 'peacock', 'lead pipe', 'kitchen', 'green', null);
+
+    assert(game.hasExactSolution());
     assert(game.checkAccusation('peacock', 'lead pipe', 'billiard room'));
+    assert.deepEqual(game.potentialSolution(), {
+      suspect: ['peacock'],
+      weapon: ['lead pipe'],
+      room: ['billiard room']
+    });
+  });
+
+  it('returns players between', function() {
+    const game = new ClueGame([
+      'scarlet',
+      'mustard',
+      'white',
+      'green',
+      'peacock',
+      'plum',
+    ]);
+
+    // basic case
+    assert.deepEqual(Array.from(game._playersBetween('scarlet', 'green')), [
+      'mustard', 'white'
+    ]);
+
+    // wrap-around
+    assert.deepEqual(Array.from(game._playersBetween('green', 'mustard')), [
+      'peacock', 'plum', 'scarlet'
+    ]);
+
+    // no refuter
+    assert.deepEqual(Array.from(game._playersBetween('white', null)), [
+      'green', 'peacock', 'plum', 'scarlet', 'mustard'
+    ]);
+  });
+});
+
+describe('negatedMissingVars', function() {
+  it('returns negated missing vars', function() {
+    const solver = new Logic.Solver();
+    solver.require(Logic.or('A', 'B'));
+    const solution = solver.solve();
+    const trueVars = solution.getTrueVars();
+    assert.deepEqual(trueVars, ['A']);
+    assert.deepEqual(_negatedMissingVars(solver, trueVars), [Logic.not('B')]);
   });
 });
