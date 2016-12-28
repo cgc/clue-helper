@@ -1,6 +1,6 @@
 // I borrow the test case in this file and took lots of hints from
 // this assignment: http://cs.gettysburg.edu/~tneller/nsf/clue/clue.pdf
-const csp = require('csp.js');
+const Logic = require('logic-solver');
 const invariant = require('invariant');
 
 const suspectValues = [
@@ -39,86 +39,126 @@ function flatten(list) {
   return list.reduce((a, b) => a.concat(b), []);
 }
 
+function negatedMissingVars(solver, trueVars) {
+  const allVars = solver._num2name.filter(function(name) { return name && name[0] !== '$' });
+  const trueVarsObject = trueVars.reduce(function(acc, v) { acc[v] = true; return acc; }, {});
+  return allVars.filter(v => !trueVarsObject[v]).map(v => Logic.not(v));
+}
+
+function potentialCards(solver, v) {
+  const prev = [];
+  const solutions = new Set();
+
+  while (true) {
+    const solution = solver.solveAssuming(Logic.and(...prev));
+
+    if (!solution) {
+      break;
+    }
+
+    const s = cardValues[solution.evaluate(v)];
+    if (solutions.has(s)) {
+      break;
+    }
+    solutions.add(s);
+
+    const solutionTrue = solution.getTrueVars().filter(s => v.bits.includes(s));
+    prev.push(Logic.not(Logic.and(
+      ...solutionTrue,
+      ...negatedMissingVars({_num2name: v.bits}, solutionTrue)
+    )));
+  }
+
+  return Array.from(solutions);
+}
+
 function _hasAnyCard(cards) {
+  const bitCards = cards.map(c => Logic.constantBits(cardValues.indexOf(c)));
   // asserts that a player must have at least one of these cards.
-  return (...playerCards) => cards.some(card => playerCards.includes(card));
+  return (playerCards) => Logic.or(
+    ...bitCards.map(bitCard => Logic.or(
+      ...playerCards.map(playerCard =>
+        Logic.equalBits(playerCard, bitCard)))));
 }
 
 function _hasNone(cards) {
   // asserts that a player cannot have any of these cards.
-  return (...playerCards) => !_hasAnyCard(cards);
+  return (playerCards) => Logic.not(_hasAnyCard(cards)(playerCards));
 }
 
 class Game {
   constructor(players) {
-    this.p = csp.DiscreteProblem();
-    this.p.addVariable('case.suspect', suspectValues);
-    this.p.addVariable('case.weapon', weaponValues);
-    this.p.addVariable('case.room', roomValues);
+    this.solver = new Logic.Solver();
+    // XXX? this.solver._minisat._C.TOTAL_MEMORY = 3e8;
 
     const cardsNotInCaseFile = cardValues.length - 3;
     const cardsPerPlayer = Math.floor(cardsNotInCaseFile / players.length);
     const cardsFaceUp = cardsNotInCaseFile - cardsPerPlayer * players.length;
 
     // Add cards that are left face-up
+    this.faceUp = [];
     for (let idx = 0; idx < cardsFaceUp; idx++) {
       const name = `faceUp.${idx}`;
-      this.p.addVariable(name, cardValues);
-      this.faceUp.push(name);
+      this.faceUp.push(this._createCardLocation(name));
     }
 
     // Add cards for each player
-    this.cardConstraints = [];
+    this.cardLocations = [];
     for (let idx = 0; idx < players.length; idx++) {
       const player = players[idx];
       invariant(suspectValues.includes(player), `found invalid player: ${player}`);
       const c = [];
       for (let cardIndex = 0; cardIndex < cardsPerPlayer; cardIndex++) {
-        const name = `player.${idx}.card.${cardIndex}`;
-        this.p.addVariable(name, cardValues);
-        c.push(name);
+        c.push(this._createCardLocation(`player.${idx}.card.${cardIndex}`));
       }
-      this.cardConstraints.push(c);
+      this.cardLocations.push(c);
     }
 
-    this._constrainCardExistsAndUnique(suspectValues, 'case.suspect');
-    this._constrainCardExistsAndUnique(weaponValues, 'case.weapon');
-    this._constrainCardExistsAndUnique(roomValues, 'case.room');
+    this.caseSuspect = this._createCardLocation('case.suspect');
+    this.caseWeapon = this._createCardLocation('case.weapon');
+    this.caseRoom = this._createCardLocation('case.room');
+    this._constrainCardExistsAndUnique(suspectValues, this.caseSuspect);
+    this._constrainCardExistsAndUnique(weaponValues, this.caseWeapon);
+    this._constrainCardExistsAndUnique(roomValues, this.caseRoom);
 
     this.cardsPerPlayer = cardsPerPlayer;
     this.players = players;
   }
 
-  _constrainCardExistsAndUnique(values, caseFileConstraintName) {
+  _createCardLocation(name) {
+    const cardLocation = Logic.variableBits(name, Math.ceil(Math.log2(cardValues.length)));
+    this.solver.require(Logic.lessThan(cardLocation, Logic.constantBits(cardValues.length)));
+    return cardLocation;
+  }
+
+  _constrainCardExistsAndUnique(values, caseFile) {
+    const bitValues = values.map(v => Logic.constantBits(cardValues.indexOf(v)));
+
+    // ensure the case file can only have values of this kind
+    this.solver.require(Logic.exactlyOne(...bitValues.map(v =>
+      Logic.equalBits(caseFile, v))));
+
     // Each card is in at least one place (including case file).
     // If a card is one place, it cannot be in another place.
-    const constraintNames = flatten(this.cardConstraints)
+    const vars = flatten(this.cardLocations)
       .concat(this.faceUp)
-      .concat([caseFileConstraintName]);
-    this.p.addConstraint(constraintNames, function(...cards) {
-      for (const value of values) {
-        const idx = cards.indexOf(value);
-        // tests for existence
-        if (idx === -1) {
-          return false;
-        }
-        // tests for uniqueness
-        if (cards.indexOf(value, idx + 1) !== -1) {
-          return false;
-        }
-      }
-      return true;
-    });
+      .concat([caseFile]);
+
+    for (const bitValue of bitValues) {
+      this.solver.require(Logic.exactlyOne(...vars.map(c =>
+        Logic.equalBits(c, bitValue)
+      )));
+    }
   }
 
   _constrainPlayerCards(player, constraint) {
-    const cardConstraints = this.cardConstraints[this.players.indexOf(player)];
-    this.p.addConstraint(cardConstraints, constraint);
+    const cardLocations = this.cardLocations[this.players.indexOf(player)];
+    this.solver.require(constraint(cardLocations));
   }
 
   hand(player, cards) {
     invariant(cards.length === this.cardsPerPlayer, 'hand must be');
-    for (const card in cards) {
+    for (const card of cards) {
       this._constrainPlayerCards(player, _hasAnyCard([card]));
     }
   }
@@ -131,8 +171,11 @@ class Game {
 
     // handles wrap-around in players array. handles case of missing refuter.
     const refuterIndex = refuter ? this.players.indexOf(refuter) : suggesterIndex;
-    for (let idx = suggesterIndex; idx < refuterIndex; idx = (idx + 1) % this.players.length) {
+    let idx = suggesterIndex + 1;
+    while (idx < refuterIndex) {
+      idx = idx % this.players.length;
       this._constrainPlayerCards(this.players[idx], _hasNone(suggestedCards));
+      idx++;
     }
 
     if (cardShown) {
@@ -140,6 +183,21 @@ class Game {
     } else if (refuter) {
       this._constrainPlayerCards(refuter, _hasAnyCard(suggestedCards));
     }
+  }
+
+  checkAccusation(suspect, weapon, room) {
+    return potentialCards(this.solver, this.caseSuspect).includes(suspect) &&
+      potentialCards(this.solver, this.caseWeapon).includes(weapon) &&
+      potentialCards(this.solver, this.caseRoom).includes(room);
+  }
+
+  failedAccusation(suspect, weapon, room) {
+    // XXX
+    // this.solver.require(Logic.or(
+    //   Logic.not(Logic.equalBits(
+    //     this.caseSuspect,
+    //     Logic.constantBits(cardValues.indexOf(suspect))))
+    //   ...));
   }
 }
 
@@ -153,14 +211,11 @@ function test() {
     'plum',
   ]);
 
-  console.log('hi', cr.p.getSolutions());
   cr.hand('scarlet', ['white', 'library', 'study']);
-  console.log('hi', cr.p.getSolutions());
   cr.suggest('scarlet', 'scarlet', 'rope', 'lounge', 'mustard', 'scarlet');
   cr.suggest('mustard', 'peacock', 'lead pipe', 'dining room', 'peacock', null);
   cr.suggest('white', 'mustard', 'revolver', 'ballroom', 'peacock', null);
   cr.suggest('green', 'white', 'knife', 'ballroom', 'plum', null);
-  console.log(cr.p.getSolutions());
   cr.suggest('peacock', 'green', 'candlestick', 'dining room', 'white', null);
   cr.suggest('plum', 'white', 'wrench', 'study', 'scarlet', 'white');
   cr.suggest('scarlet', 'plum', 'rope', 'conservatory', 'mustard', 'plum');
@@ -170,7 +225,6 @@ function test() {
   cr.suggest('peacock', 'mustard', 'lead pipe', 'dining room', 'plum', null);
   cr.suggest('plum', 'green', 'knife', 'conservatory', 'white', null);
   cr.suggest('scarlet', 'peacock', 'knife', 'lounge', 'mustard', 'lounge');
-  console.log(cr.p.getSolutions());
   cr.suggest('mustard', 'peacock', 'knife', 'dining room', 'white', null);
   cr.suggest('white', 'peacock', 'wrench', 'hall', 'green', null);
   cr.suggest('green', 'white', 'lead pipe', 'conservatory', 'plum', null);
@@ -185,8 +239,7 @@ function test() {
   cr.suggest('green', 'white', 'lead pipe', 'study', 'scarlet', 'white');
   cr.suggest('peacock', 'white', 'lead pipe', 'study', 'scarlet', 'white');
   cr.suggest('plum', 'peacock', 'lead pipe', 'kitchen', 'green', null);
-  console.log(cr.p.getSolutions());
-  cr.accuse('scarlet', 'peacock', 'lead pipe', 'billiard room', true);
+  console.log('checking peacock, pipe, billiard:', cr.checkAccusation('peacock', 'lead pipe', 'billiard room'));
 }
 
 test();
