@@ -86,7 +86,7 @@ function _hasNone(cards) {
   return (playerCards) => Logic.not(_hasAnyCard(cards)(playerCards));
 }
 
-class Game {
+class ClueGame {
   constructor(players) {
     this.solver = new Logic.Solver();
     // XXX? this.solver._minisat._C.TOTAL_MEMORY = 3e8;
@@ -201,45 +201,4 @@ class Game {
   }
 }
 
-function test() {
-  const cr = new Game([
-    'scarlet',
-    'mustard',
-    'white',
-    'green',
-    'peacock',
-    'plum',
-  ]);
-
-  cr.hand('scarlet', ['white', 'library', 'study']);
-  cr.suggest('scarlet', 'scarlet', 'rope', 'lounge', 'mustard', 'scarlet');
-  cr.suggest('mustard', 'peacock', 'lead pipe', 'dining room', 'peacock', null);
-  cr.suggest('white', 'mustard', 'revolver', 'ballroom', 'peacock', null);
-  cr.suggest('green', 'white', 'knife', 'ballroom', 'plum', null);
-  cr.suggest('peacock', 'green', 'candlestick', 'dining room', 'white', null);
-  cr.suggest('plum', 'white', 'wrench', 'study', 'scarlet', 'white');
-  cr.suggest('scarlet', 'plum', 'rope', 'conservatory', 'mustard', 'plum');
-  cr.suggest('mustard', 'peacock', 'rope', 'ballroom', 'white', null);
-  cr.suggest('white', 'mustard', 'candlestick', 'study', 'green', null);
-  cr.suggest('green', 'peacock', 'knife', 'dining room', 'peacock', null);
-  cr.suggest('peacock', 'mustard', 'lead pipe', 'dining room', 'plum', null);
-  cr.suggest('plum', 'green', 'knife', 'conservatory', 'white', null);
-  cr.suggest('scarlet', 'peacock', 'knife', 'lounge', 'mustard', 'lounge');
-  cr.suggest('mustard', 'peacock', 'knife', 'dining room', 'white', null);
-  cr.suggest('white', 'peacock', 'wrench', 'hall', 'green', null);
-  cr.suggest('green', 'white', 'lead pipe', 'conservatory', 'plum', null);
-  cr.suggest('peacock', 'scarlet', 'lead pipe', 'hall', 'mustard', null);
-  cr.suggest('plum', 'peacock', 'lead pipe', 'ballroom', null, null);
-  cr.suggest('scarlet', 'white', 'lead pipe', 'hall', 'peacock', 'hall');
-  cr.suggest('white', 'peacock', 'lead pipe', 'hall', 'peacock', null);
-  cr.suggest('peacock', 'peacock', 'lead pipe', 'hall', null, null);
-  cr.suggest('scarlet', 'green', 'lead pipe', 'study', 'white', 'green');
-  cr.suggest('mustard', 'peacock', 'lead pipe', 'ballroom', 'plum', null);
-  cr.suggest('white', 'peacock', 'lead pipe', 'study', 'scarlet', 'study');
-  cr.suggest('green', 'white', 'lead pipe', 'study', 'scarlet', 'white');
-  cr.suggest('peacock', 'white', 'lead pipe', 'study', 'scarlet', 'white');
-  cr.suggest('plum', 'peacock', 'lead pipe', 'kitchen', 'green', null);
-  console.log('checking peacock, pipe, billiard:', cr.checkAccusation('peacock', 'lead pipe', 'billiard room'));
-}
-
-test();
+exports.ClueGame = ClueGame;
