@@ -62,3 +62,4 @@ Returns the potential suspects, weapons, and rooms for the case.
 - test support for face-up cards
 - web ui?
 - make API keep track of turns
+- Generate maximally-informative questions
